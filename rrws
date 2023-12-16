@@ -1,0 +1,136 @@
+function [aeussereOrientierung, sDachAeussereOrientierung, s0Dach, sDachBildpunkte, iter] = ...
+    rrws(bildpunkte, objektpunkte, naeherungswerte, zStrich, gewichtsmatrix)
+
+% Überbestimmter räumlicher Rückwärtsschnitt**
+% Diese Funktion berechnet aus Objektpunktkoordinaten und
+% korrespondierenden Bildpunkten die aeussere Orientierung der Kamera mit
+% Hilfe einer Ausgleichung nach vermittelnden Beobachtungen (Gauss-Markow).
+%
+% Eingabe:
+%
+% bildpunkte                    (n,2) Matrix: Koordinaten der Bildpunkte
+% objektpunkte                  (n,3) Matrix: Koordinaten der Objektpunkte
+% naeherungswerte               (6,1) Vektor: Naeherungswerte fuer aeussere Orientierung,
+%                               wobei die Parameter eins bis drei die Position der Kamera
+%                               im Bezug zum Objektkoordinatensystem repräsentieren und
+%                               Parameter vier bis sechs die Orientierung in Euler Winkeln in 'XYZ' Konvention.
+%                               
+% kamerakonstante               Skalar: Kamerakonstante (gleiche Einheit wie Bildkoordinaten!)
+% gewichtsmatrix                (__,__) Matrix: Gewichtsmatrix der Beobachtungen
+%
+% Ausgabe:
+%
+% aeussereOrientierung          (6,1) Vektor: Parameter der ausgeglichenen aeusseren Orientierung (für Details s.o.)
+% sDachAeussereOrientierung     (6,1) Vektor: Standardabweichungen dieser Parameter
+% s0Dach                        Skalar: Sigma a posteriori
+% sDachBildpunkte               (2n,1) Vektor: Standardabweichungen der Bildkoordinaten
+% iter                          Skalar: Anzahl der durchlaufenen Iterationen
+
+%% Initialisierung von Variablen
+% Initialisierung der skalaren Groessen
+iter = 0; % Laufindex fuer Iterationen der Ausgleichung
+maxIter = 20; % Maximale Anzahl an Iterationen
+n = size(bildpunkte,1); % Anzahl der Bildpunkte
+if n<3
+    error('Es werden mindestens 3 Objektpunkte und korrespondierende Bildpunkte benoetigt.')
+end
+u = 6; % Anzahl der Unbekannten
+abbruchSchwellwert = 1e-4; % Schwellwert fuer Abbruchkriterium
+
+% Initialisierung der Vektoren und Matrizen
+A = zeros(2*n,6); % Designmatrix
+l = zeros(2*n, 1); % Beobachtungsvektor
+xDach = zeros(6,1); % Zuschlaege zu den Unbekannten
+P = gewichtsmatrix; % Gewichtsmatrix
+aeussereOrientierung = naeherungswerte; % Initialisierung der Aeusseren Orientierung
+                                        % mit Naeherungswerten
+
+%% Iterative Ausgleichung nach vermittelnden Beobachtungen
+disp('Ausgleichung:')
+disp('Iteration    Mittlerer Rueckprojektionsfehler');
+while iter < maxIter
+    iter = iter+1;
+    
+    % Ausrichtung in der aktuellen Iteration in rad
+    omega = aeussereOrientierung(4);
+    phi = aeussereOrientierung(5);
+    kappa = aeussereOrientierung(6);
+        
+    % Berechnung aller Drehmatrixelemente (siehe Abschnitt 2.1)
+    r11 = cos(phi)*cos(kappa);
+    r12 = -cos(phi)*sin(kappa);
+    r13 = sin(phi);
+    r21 = cos(omega)*sin(kappa) + sin(omega)*sin(phi)*cos(kappa);
+    r22 = cos(omega)*cos(kappa) - sin(omega)*sin(phi)*sin(kappa);
+    r23 = -sin(omega)*cos(phi);
+    r31 = sin(omega)*sin(kappa) - cos(omega)*sin(phi)*cos(kappa);
+    r32 = sin(omega)*cos(kappa) + cos(omega)*sin(phi)*sin(kappa);
+    r33 = cos(omega)*cos(phi);
+
+    % Kollinearitaetsgleichungen (siehe Abschnitt 2.2)
+    % Transformation der Objektpunkte ins Kamerakoordinatensystem und
+    % Projektion ins Bild -> x0, y0
+    dX = objektpunkte(:,1) - aeussereOrientierung(1);
+    dY = objektpunkte(:,2) - aeussereOrientierung(2);
+    dZ = objektpunkte(:,3) - aeussereOrientierung(3);
+
+    kx = r11*dX + r21*dY + r31*dZ;
+    ky = r12*dX + r22*dY + r32*dZ;
+    N = r13*dX + r23*dY + r33*dZ;
+
+    xStrich = zStrich.*kx./N;
+    yStrich = zStrich.*ky./N;
+
+    % Designmatrix (siehe Abschnitt 2.3)
+
+    % Ableitung von xi nach den Unbekannten
+    % 2. Parameter ist 2, weil jede zweite Zeile nach x abgeleitet wird
+    
+    A(1:2:2*n-1, 1) = zStrich./N.^2 .* (r13*kx - r11*N);
+    A(1:2:2*n-1, 2) = zStrich./N.^2 .* (r23*kx - r21*N);
+    A(1:2:2*n-1, 3) = zStrich./N.^2 .* (r33*kx - r31*N);
+    A(1:2:2*n-1, 4) = zStrich./N .* ( kx./N.*(r33*dY - r23*dZ +r21*dZ)); %nach omega
+    A(1:2:2*n-1, 5) = zStrich./N .* ( kx./N.* (ky*sin(kappa) - kx*cos(kappa)) - N.*cos(kappa)); %nach phi
+    A(1:2:2*n-1, 6) = zStrich./N .* ky; % nach kappa
+    
+    % Ableitung von yi nach den Unbekannten
+    A(2:2:2*n,   1) = zStrich./N.^2 .* (r13*ky - r12*N);
+    A(2:2:2*n,   2) = zStrich./N.^2 .* (r23*ky - r22*N);
+    A(2:2:2*n,   3) = zStrich./N.^2 .* (r33*ky - r32*N);
+    A(2:2:2*n,   4) = zStrich./N.* (ky./N.*(r33*dY - r23*dZ) - r32*dY + r22*dZ);
+    A(2:2:2*n,   5) = zStrich./N.* (ky./N.*(ky*sin(kappa) - kx*cos(kappa)) + N.*sin(kappa));
+    A(2:2:2*n,   6) = -zStrich./N.*kx;
+  
+    % Vektor der verkuerzten Beobachtungen (siehe Abschnitt 2.4)
+    % Gemessene Bildpunkte minus ins Bild projizierte Objektpunkte
+    l(1:2:2*n-1) = bildpunkte(:,1) - xStrich;
+    l(2:2:2*n) = bildpunkte(:,2) - yStrich;
+
+    % Ausgabe des Rueckprojektionsfehlers im command window
+    mittlererRueckprojektionsfehler = mean(sqrt(bildpunkte(:,1) - xi).^2 + (bildpunkte(:,2) - yi).^2);
+    fprintf('%-9d    %-.2f\n', iter, mittlererRueckprojektionsfehler);
+
+    % Loesen der Normalgleichung
+    temp = xDach;
+    N = A'* P*A;
+    Qxx = pinv(N);
+    xDach = Qxx*(A'*P*l);
+    aeussereOrientierung = aeussereOrientierung + xDach;
+
+
+    % Teste Abbruchkriterium
+    if ( max(abs(temp-xDach)) < abbruchSchwellwert)
+        break
+    end
+end % while
+
+%% Ableitung sonstiger Statistiken (siehe Abschnitt 2.4)
+vDach = A*xDach - l;
+s0Dach = sqrt((vDach'*P*vDach)./2*n-u);
+QllDach = A*Qxx*A';
+sDachBildpunkte = s0Dach*sqrt(diag(QllDach));
+sDachAeussereOrientierung = s0Dach*sqrt(diag(Qxx));
+
+
+
+end
