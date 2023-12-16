@@ -1,0 +1,139 @@
+% Uebung2 Räumlicher Ruckwärtsschnitt Lazaro Bayer, Alina Fingerle, Ivana Hansmann
+Dieses Skript bestimmt die Aeussere Orientierung fuer ein Bild, auf dem
+% ein Schachbrett abgebildet ist.
+
+clc 
+close all
+clear
+
+format longG
+% Dieses Skript bestimmt die aeussere Orientierung fuer ein Bild, auf dem
+% ein Schachbrett abgebildet ist.
+
+format longG
+
+%% Laden der Inneren Orientierung
+load('________________');
+% displayErrors(estimationErrors, cameraParams);
+
+kamerakonstante = cameraParams.FocalLength; % in pixeln
+bildhauptpunkt = cameraParams.PrincipalPoint; % in pixeln
+
+%% Laden des Bildes
+bildPfad = '.\Bild_8.png';
+bild = imread(bildPfad);
+
+%% Bestimmung der 2D-Bildpunkte (Detektion der Schachbrettpunkte)
+[bildpunkteVerzeichnet, schachbrettgroesse] = detectCheckerboardPoints(bild);
+
+% Entfernen der Verzeichnung
+bildpunkte = undistortPoints(bildpunkteVerzeichnet, cameraParams);
+
+anzBildpunkte = size(bildpunkte,1);
+
+%% Bestimmung der 3D-Objektpunkte
+quadratKantenlaenge = 26; % in mm
+objektpunkte = generateCheckerboardPoints(schachbrettgroesse, quadratKantenlaenge);
+% z-Koordinate hinzufuegen
+objektpunkte(:,3) = 0;
+
+%% Bestimmung der Naeherungswerte der Aeusseren Orientierung
+camExtrinsicsNaeherung = estimateExtrinsics(bildpunkte, objektpunkte(:,1:2), cameraParams.Intrinsics);
+
+%% Visualisierung der Naeherungswerte
+
+% Visualisierung in 3D
+figure(1);
+plot3(objektpunkte(:,1), objektpunkte(:,2), objektpunkte(:,3), 'k*');
+set(gca,'ZDir','reverse', 'YDir', 'reverse');
+hold on;
+plotCamera('Size',30,'AbsolutePose',extr2pose(camExtrinsicsNaeherung), 'Color', 'b');
+hold off;
+grid on;
+axis equal
+xlabel('X in mm');
+ylabel('Y in mm');
+zlabel('Z in mm');
+drawnow;
+pause(0.5)
+
+% Visualisierung in 2D
+bildKorrigiert = undistortImage(bild, cameraParams);
+figure(2);
+imshow(bildKorrigiert);
+hold on;
+plot(bildpunkte(:,1), bildpunkte(:,2), 'go');
+reprojectedPoints = world2img(objektpunkte, camExtrinsicsNaeherung, cameraParams.Intrinsics);
+plot(reprojectedPoints(:,1), reprojectedPoints(:,2), 'b*');
+drawnow;
+hold off;
+
+%% Raeumlicher Rueckwaertsschnitt zur Verbesserung der Naeherungswerte
+gewichtsmatrix = eye(________________);
+bildpunkteRed(:,1) = bildpunkte(:,1) - bildhauptpunkt(1);
+bildpunkteRed(:,2) = bildpunkte(:,2) - bildhauptpunkt(2);
+
+% Konvertiere Matlabs camExtrinsics in auessereOrientierung (siehe rrws.m)
+auessereOrientierungNaeherung = camExtrinsics2AuessereOrientierung(camExtrinsicsNaeherung);
+
+% Raeumlicher Rueckwaertsschnitt
+[aeussereOrientierung, sDachAeussereOrientierung, s0Dach, sDachBildpunkte, iter] = ...
+    rrws(bildpunkteRed, objektpunkte, auessereOrientierungNaeherung, kamerakonstante(1), gewichtsmatrix);
+
+% Konvertiere auessereOrientierung zurück in Matlabs camExtrinsics
+camExtrinsics = aeussereOrientierung2camExtrinsics(aeussereOrientierung);
+
+%% Darstellung des Ergebnisses auf der Konsole
+fprintf('---------------------------\n');
+fprintf('Aeussere Orientierung:\n');
+fprintf('%-15s %26s %26s %26s %26s %26s %26s', ...
+    ' ', 'X in mm', 'Y in mm', 'Z in mm', [char(hex2dec('03C9')), ' in °'], [char(hex2dec('03D5')), ' in °'], [char(hex2dec('03BA')), ' in °']);
+fprintf('\n');
+fprintf('%-15s %26.2f %26.2f %26.2f %26.3f %26.3f %26.3f\n', ...
+    'Naeherungswerte', ...
+    auessereOrientierungNaeherung(1), ...
+    auessereOrientierungNaeherung(2), ...
+    auessereOrientierungNaeherung(3), ...
+    rad2deg(auessereOrientierungNaeherung(4)), ...
+    rad2deg(auessereOrientierungNaeherung(5)), ...
+    rad2deg(auessereOrientierungNaeherung(6)));
+formatSpecLage = '%15.2f +/- %-6.2f ';
+formatSpecOrientierung = '%15.3f +/- %-7.3f';
+formatSpec = ['%-26s ', ...
+    formatSpecLage, ...
+    formatSpecLage, ...
+    formatSpecLage, ...
+    formatSpecOrientierung, ...
+    formatSpecOrientierung, ...
+    formatSpecOrientierung, ...
+    '\n'];
+fprintf(formatSpec, ...
+    'Ausgeglichen', ...
+    aeussereOrientierung(1), sDachAeussereOrientierung(1), ...
+    aeussereOrientierung(2), sDachAeussereOrientierung(2), ...
+    aeussereOrientierung(3), sDachAeussereOrientierung(3), ...
+    rad2deg(aeussereOrientierung(4)), rad2deg(sDachAeussereOrientierung(4)), ...
+    rad2deg(aeussereOrientierung(5)), rad2deg(sDachAeussereOrientierung(5)), ...
+    rad2deg(aeussereOrientierung(6)), rad2deg(sDachAeussereOrientierung(6)));
+fprintf('---------------------------\n');
+
+%% Visualisierung des Ergebnisses
+
+% Visualisierung in 3D
+figure(1); hold on
+plotCamera('Size',30,'AbsolutePose',extr2pose(camExtrinsics), 'Color', 'r');
+hold off;
+pause(0.5);
+drawnow;
+
+% Visualisierung in 2D
+figure(2);
+hold on;
+reprojectedPoints = world2img(objektpunkte, camExtrinsics, cameraParams.Intrinsics);
+plot(reprojectedPoints(:,1), reprojectedPoints(:,2), 'r+');
+hold off;
+legend('Gemessene Bildpunkte', ...
+       'Mit Naeherungswerten ins Bild projizierte Objektpunte', ...
+       'Mit ausgeglichener aeusserer Orientierung ins Bild projizierte Objektpunkte');
+drawnow;
+
