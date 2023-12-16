@@ -1,0 +1,13 @@
+function camExtrinsics = aeussereOrientierung2camExtrinsics(aussereOrientierung)
+
+% This function converts aeussereOrientierung to Matlab extrinsics.
+% It is assumed that the rotation is parametrized with euler angles in 'XYZ' convention.
+
+Translation = aussereOrientierung(1:3); 
+eul = aussereOrientierung(4:6);
+R = eul2rotm(eul', 'XYZ');
+camPose = rigidtform3d(R, Translation);
+
+camExtrinsics = pose2extr(camPose);
+
+end
