@@ -1,0 +1,10 @@
+function aeussereOrientierung = camExtrinsics2AuessereOrientierung(camExtrinsics)
+
+% This function converts Matlab extrinsics to aeussereOrientierung.
+% The rotation is parametrized with euler angles in 'XYZ' convention.
+
+cameraPose = extr2pose(camExtrinsics);
+eul = rotm2eul(cameraPose.R, 'XYZ');
+aeussereOrientierung = [cameraPose.Translation'; eul'];
+
+end
